@@ -28,13 +28,10 @@ def download_mega(url: str, custom_filename: str = None) -> str:
     """Descarga un archivo público de Mega.nz."""
     mega = Mega()
     m = mega.login_anonymous()
-    
-    # mega.py descarga de forma directa y bloqueante en una sola función
     file_path = m.download_url(url, dest_path=DOWNLOAD_DIR)
     
-    # Si se pide renombrar para mantener el orden (ej. Video_1.mp4)
     if custom_filename:
-        ext = os.path.splitext(file_path)[1] or ".mp4"
+        ext = os.path.splitext(file_path)[1] if "." in file_path else ".mp4"
         new_path = os.path.join(DOWNLOAD_DIR, f"{custom_filename}{ext}")
         os.rename(file_path, new_path)
         return new_path
@@ -57,7 +54,8 @@ def download_mediafire(url: str, progress_callback=None, custom_filename: str = 
     direct_link = download_button["href"]
     
     if custom_filename:
-        ext = os.path.splitext(direct_link.split("/")[-1].split("?")[0])[1] or ".mp4"
+        original_name = direct_link.split("/")[-1].split("?")[0]
+        ext = os.path.splitext(original_name)[1] if "." in original_name else ".mp4"
         filename = f"{custom_filename}{ext}"
     else:
         filename = direct_link.split("/")[-1].split("?")[0]
@@ -75,7 +73,6 @@ def download_mediafire(url: str, progress_callback=None, custom_filename: str = 
                     f.write(chunk)
                     bytes_downloaded += len(chunk)
                     if progress_callback and total_size > 0:
-                        # Invoca la función asíncrona de progreso adaptada para hilos si es necesario
                         progress_callback(bytes_downloaded, total_size)
 
     return dest_path
