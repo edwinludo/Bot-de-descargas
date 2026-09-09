@@ -1,6 +1,7 @@
 """
 Bot de Telegram para descargar archivos de Mega.nz y Mediafire (Soporta hasta 2GB).
-Optimizado para Render usando almacenamiento de sesión en disco y servidor web Waitress.
+Muestra barras de progreso detalladas tanto para la DESCARGA como para la SUBIDA.
+Renombra y numera secuencialmente los videos de acuerdo al orden de la cola (Video 1, 2, 3...).
 """
 
 import os
@@ -40,14 +41,11 @@ def home():
 
 def run_web():
     port = int(os.environ.get("PORT", 8080))
-    # Usamos Waitress en lugar de web_app.run() para evitar bloqueos de hilos
     serve(web_app, host="0.0.0.0", port=port)
 
 if not all([API_ID, API_HASH, BOT_TOKEN]):
     raise RuntimeError("Faltan variables de entorno esenciales (API_ID, API_HASH o BOT_TOKEN)")
 
-# --- OPTIMIZACIÓN: Guardar la sesión en el disco temporal de Render ---
-# Esto evita que Telegram pida autenticación en cada reinicio
 session_path = os.path.join("/tmp", "mega_mediafire_bot")
 
 bot = Client(
@@ -156,7 +154,7 @@ async def handle_buttons(client: Client, callback_query: CallbackQuery):
             await callback_query.answer("No tienes enlaces en tu lista.", show_alert=True)
             return
 
-        await callback_query.answer("Iniciando descargas en lote...")
+        await callback_query.answer("Iniciando descargas...")
         status_msg = await callback_query.message.edit_text("Preparando entorno de descarga...")
         
         total_links = len(queue)
@@ -169,12 +167,13 @@ async def handle_buttons(client: Client, callback_query: CallbackQuery):
             custom_name = f"Video {index}"
             
             start_download_time = time.time()
-            last_edit = [time.time()]
+            # CORRECCIÓN: Usamos un diccionario para evitar el error de cálculo matemático en el hilo secundario
+            progress_tracker = {"last_edit": time.time()}
             
             def download_callback(current, total):
                 now = time.time()
-                if now - last_edit[0] >= 3.0:
-                    last_edit[0] = now
+                if now - progress_tracker["last_edit"] >= 3.0:
+                    progress_tracker["last_edit"] = now
                     txt = make_progress_text(current, total, start_download_time, "⏳ **Descargando al Servidor...**", index, total_links)
                     asyncio.run_coroutine_threadsafe(status_msg.edit_text(txt), loop)
 
