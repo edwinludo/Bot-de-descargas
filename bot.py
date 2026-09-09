@@ -92,7 +92,7 @@ async def handle_link(client: Client, message: Message):
         await status_msg.edit_text("Descarga lista, subiendo a Telegram...")
 
         # Pyrogram maneja la subida en partes de forma automática
-        await message.reply_document(document=file_path)
+        await message.reply_video(video=file_path, supports_streaming=True)
 
         await status_msg.delete()
         if os.path.exists(file_path):
