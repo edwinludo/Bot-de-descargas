@@ -1,7 +1,6 @@
 """
 Bot de Telegram para descargar archivos de Mega.nz y Mediafire (Soporta hasta 2GB).
-Muestra barras de progreso detalladas tanto para la DESCARGA como para la SUBIDA.
-Renombra y numera secuencialmente los videos de acuerdo al orden de la cola (Video 1, 2, 3...).
+Estructura 100% asíncrona para evitar que el bot se pegue o congele en Render.
 """
 
 import os
@@ -16,7 +15,7 @@ from waitress import serve
 from pyrogram import Client, filters
 from pyrogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 
-from downloader import detect_link_type, download_mega, download_mediafire, get_file_size_mb
+from downloader import detect_link_type, download_mega_async, download_mediafire_async, get_file_size_mb
 
 # --- Configuración del Logging ---
 logging.basicConfig(
@@ -158,7 +157,6 @@ async def handle_buttons(client: Client, callback_query: CallbackQuery):
         status_msg = await callback_query.message.edit_text("Preparando entorno de descarga...")
         
         total_links = len(queue)
-        loop = asyncio.get_event_loop()
         
         for index, url in enumerate(list(queue), start=1):
             link_type = detect_link_type(url)
@@ -167,22 +165,25 @@ async def handle_buttons(client: Client, callback_query: CallbackQuery):
             custom_name = f"Video {index}"
             
             start_download_time = time.time()
-            # CORRECCIÓN: Usamos un diccionario para evitar el error de cálculo matemático en el hilo secundario
             progress_tracker = {"last_edit": time.time()}
             
-            def download_callback(current, total):
+            # El callback ahora es una función asíncrona nativa directa
+            async def download_callback(current, total):
                 now = time.time()
                 if now - progress_tracker["last_edit"] >= 3.0:
                     progress_tracker["last_edit"] = now
                     txt = make_progress_text(current, total, start_download_time, "⏳ **Descargando al Servidor...**", index, total_links)
-                    asyncio.run_coroutine_threadsafe(status_msg.edit_text(txt), loop)
+                    try:
+                        await status_msg.edit_text(txt)
+                    except Exception:
+                        pass
 
             try:
                 if link_type == "mediafire":
-                    file_path = download_mediafire(url, progress_callback=download_callback, custom_filename=custom_name)
+                    file_path = await download_mediafire_async(url, progress_callback=download_callback, custom_filename=custom_name)
                 else:
                     await status_msg.edit_text(f"⏳ **[{index}/{total_links}]** Descargando `{custom_name}` desde Mega... (Espera un momento)")
-                    file_path = download_mega(url, custom_filename=custom_name)
+                    file_path = await download_mega_async(url, custom_filename=custom_name)
 
                 size_mb = get_file_size_mb(file_path)
                 if size_mb > MAX_TELEGRAM_MB:
