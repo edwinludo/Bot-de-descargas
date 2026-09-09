@@ -56,7 +56,10 @@ async def start(client: Client, message: Message):
         "¡Hola! Mandame un link de Mega.nz o Mediafire y te lo descargo (Soporto hasta 2GB)."
     )
 
-@bot.on_message(filters.text & ~filters.command)
+# Filtro personalizado: Acepta texto pero ignora mensajes que inicien con '/' (comandos)
+filter_text_no_command = filters.text & filters.create(lambda _, __, msg: msg.text and not msg.text.startswith("/"))
+
+@bot.on_message(filter_text_no_command)
 async def handle_link(client: Client, message: Message):
     url = message.text.strip()
     link_type = detect_link_type(url)
