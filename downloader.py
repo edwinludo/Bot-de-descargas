@@ -1,5 +1,5 @@
 """
-Funciones para descargar archivos desde Mega.nz y Mediafire.
+Funciones para descargar archivos desde Mega.nz y Mediafire con soporte de progreso.
 """
 
 import os
@@ -24,23 +24,26 @@ def detect_link_type(url: str) -> str:
     return None
 
 
-def download_mega(url: str) -> str:
-    """
-    Descarga un archivo público de Mega.nz.
-    Devuelve la ruta local del archivo descargado.
-    """
+def download_mega(url: str, custom_filename: str = None) -> str:
+    """Descarga un archivo público de Mega.nz."""
     mega = Mega()
     m = mega.login_anonymous()
+    
+    # mega.py descarga de forma directa y bloqueante en una sola función
     file_path = m.download_url(url, dest_path=DOWNLOAD_DIR)
+    
+    # Si se pide renombrar para mantener el orden (ej. Video_1.mp4)
+    if custom_filename:
+        ext = os.path.splitext(file_path)[1] or ".mp4"
+        new_path = os.path.join(DOWNLOAD_DIR, f"{custom_filename}{ext}")
+        os.rename(file_path, new_path)
+        return new_path
+        
     return str(file_path)
 
 
-def download_mediafire(url: str) -> str:
-    """
-    Descarga un archivo público de Mediafire.
-    Mediafire no tiene API pública, así que se scrapea el botón de descarga.
-    Devuelve la ruta local del archivo descargado.
-    """
+def download_mediafire(url: str, progress_callback=None, custom_filename: str = None) -> str:
+    """Descarga un archivo de Mediafire reportando el progreso de descarga."""
     session = requests.Session()
     resp = session.get(url, timeout=30)
     resp.raise_for_status()
@@ -52,15 +55,28 @@ def download_mediafire(url: str) -> str:
         raise ValueError("No se pudo encontrar el enlace directo de descarga en Mediafire.")
 
     direct_link = download_button["href"]
-    filename = direct_link.split("/")[-1].split("?")[0]
+    
+    if custom_filename:
+        ext = os.path.splitext(direct_link.split("/")[-1].split("?")[0])[1] or ".mp4"
+        filename = f"{custom_filename}{ext}"
+    else:
+        filename = direct_link.split("/")[-1].split("?")[0]
+        
     dest_path = os.path.join(DOWNLOAD_DIR, filename)
 
     with session.get(direct_link, stream=True, timeout=60) as r:
         r.raise_for_status()
+        total_size = int(r.headers.get('content-length', 0))
+        bytes_downloaded = 0
+        
         with open(dest_path, "wb") as f:
-            for chunk in r.iter_content(chunk_size=8192):
+            for chunk in r.iter_content(chunk_size=65536):
                 if chunk:
                     f.write(chunk)
+                    bytes_downloaded += len(chunk)
+                    if progress_callback and total_size > 0:
+                        # Invoca la función asíncrona de progreso adaptada para hilos si es necesario
+                        progress_callback(bytes_downloaded, total_size)
 
     return dest_path
 
