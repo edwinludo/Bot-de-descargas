@@ -1,11 +1,13 @@
 """
 Bot de Telegram para descargar archivos de Mega.nz y Mediafire (Soporta hasta 2GB).
 Corre un mini servidor Flask en paralelo para mantener vivo el servicio en Render (plan free).
+Extrae metadatos automáticamente para corregir la miniatura y el tiempo de reproducción.
 """
 
 import os
 import logging
 import threading
+import ffmpeg
 
 from flask import Flask
 from pyrogram import Client, filters
@@ -13,6 +15,7 @@ from pyrogram.types import Message
 
 from downloader import detect_link_type, download_mega, download_mediafire, get_file_size_mb
 
+# --- Configuración del Logging ---
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     level=logging.INFO,
@@ -53,7 +56,7 @@ bot = Client(
 @bot.on_message(filters.command("start"))
 async def start(client: Client, message: Message):
     await message.reply_text(
-        "¡Hola! Mandame un link de Mega.nz o Mediafire y te lo descargo (Soporto hasta 2GB)."
+        "¡Hola! Mandame un link de Mega.nz o Mediafire y te lo descargo como video con miniatura."
     )
 
 # Filtro personalizado: Acepta texto pero ignora mensajes que inicien con '/' (comandos)
@@ -89,10 +92,37 @@ async def handle_link(client: Client, message: Message):
                 os.remove(file_path)
             return
 
+        await status_msg.edit_text("Analizando metadatos del video para la miniatura...")
+
+        # --- Extraer duración y dimensiones con FFmpeg ---
+        vid_duration = 0
+        vid_width = 320
+        vid_height = 320
+        
+        try:
+            metadata = ffmpeg.probe(file_path)
+            video_stream = next((stream for stream in metadata['streams'] if stream['codec_type'] == 'video'), None)
+            
+            if video_stream:
+                vid_width = int(video_stream.get('width', 320))
+                vid_height = int(video_stream.get('height', 320))
+                # Busca la duración en la pista de video o en la información del formato
+                duration_str = video_stream.get('duration') or metadata.get('format', {}).get('duration')
+                if duration_str:
+                    vid_duration = int(float(duration_str))
+        except Exception as fe:
+            logger.warning(f"No se pudieron extraer los metadatos de video: {fe}")
+
         await status_msg.edit_text("Descarga lista, subiendo a Telegram...")
 
-        # Pyrogram maneja la subida en partes de forma automática
-        await message.reply_video(video=file_path, supports_streaming=True)
+        # Enviamos como video inyectando la duración y dimensiones calculadas por ffmpeg
+        await message.reply_video(
+            video=file_path, 
+            duration=vid_duration, 
+            width=vid_width, 
+            height=vid_height,
+            supports_streaming=True
+        )
 
         await status_msg.delete()
         if os.path.exists(file_path):
