@@ -1,7 +1,6 @@
 """
 Bot de Telegram para descargar archivos de Mega.nz y Mediafire (Soporta hasta 2GB).
-Muestra barras de progreso detalladas tanto para la DESCARGA como para la SUBIDA.
-Renombra y numera secuencialmente los videos de acuerdo al orden de la cola (Video 1, 2, 3...).
+Optimizado para Render usando almacenamiento de sesión en disco y servidor web Waitress.
 """
 
 import os
@@ -12,6 +11,7 @@ import asyncio
 import ffmpeg
 
 from flask import Flask
+from waitress import serve
 from pyrogram import Client, filters
 from pyrogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 
@@ -40,13 +40,18 @@ def home():
 
 def run_web():
     port = int(os.environ.get("PORT", 8080))
-    web_app.run(host="0.0.0.0", port=port)
+    # Usamos Waitress en lugar de web_app.run() para evitar bloqueos de hilos
+    serve(web_app, host="0.0.0.0", port=port)
 
 if not all([API_ID, API_HASH, BOT_TOKEN]):
     raise RuntimeError("Faltan variables de entorno esenciales (API_ID, API_HASH o BOT_TOKEN)")
 
+# --- OPTIMIZACIÓN: Guardar la sesión en el disco temporal de Render ---
+# Esto evita que Telegram pida autenticación en cada reinicio
+session_path = os.path.join("/tmp", "mega_mediafire_bot")
+
 bot = Client(
-    "mega_mediafire_bot",
+    session_path,
     api_id=int(API_ID),
     api_hash=API_HASH,
     bot_token=BOT_TOKEN
@@ -163,23 +168,20 @@ async def handle_buttons(client: Client, callback_query: CallbackQuery):
             file_path = None
             custom_name = f"Video {index}"
             
-            # Sub-función callback para la Descarga física (Mediafire)
             start_download_time = time.time()
-            last_edit = [0] # Uso de lista para mutabilidad local
+            last_edit = [time.time()]
             
             def download_callback(current, total):
                 now = time.time()
                 if now - last_edit[0] >= 3.0:
                     last_edit[0] = now
                     txt = make_progress_text(current, total, start_download_time, "⏳ **Descargando al Servidor...**", index, total_links)
-                    # Ejecutar la edición asíncrona de forma segura desde el hilo secundario de requests
                     asyncio.run_coroutine_threadsafe(status_msg.edit_text(txt), loop)
 
             try:
                 if link_type == "mediafire":
                     file_path = download_mediafire(url, progress_callback=download_callback, custom_filename=custom_name)
                 else:
-                    # Mega no ofrece API nativa de streams fraccionados sencillos en python, muestra aviso intermedio
                     await status_msg.edit_text(f"⏳ **[{index}/{total_links}]** Descargando `{custom_name}` desde Mega... (Espera un momento)")
                     file_path = download_mega(url, custom_filename=custom_name)
 
@@ -191,7 +193,6 @@ async def handle_buttons(client: Client, callback_query: CallbackQuery):
 
                 await status_msg.edit_text(f"🔍 **[{index}/{total_links}]** Extrayendo miniatura de `{custom_name}`...")
 
-                # --- Metadatos FFmpeg ---
                 vid_duration, vid_width, vid_height, has_thumb = 0, 320, 320, False
                 try:
                     metadata = ffmpeg.probe(file_path)
@@ -237,7 +238,12 @@ async def handle_buttons(client: Client, callback_query: CallbackQuery):
 def main():
     threading.Thread(target=run_web, daemon=True).start()
     logger.info("Bot iniciado con Pyrogram, escuchando mensajes...")
-    bot.run()
+    
+    try:
+        bot.run()
+    except Exception as e:
+        logger.error(f"Error en ejecución: {e}")
+        time.sleep(10)
 
 if __name__ == "__main__":
     main()
