@@ -31,7 +31,6 @@ BOT_TOKEN = os.environ.get("BOT_TOKEN")
 MAX_TELEGRAM_MB = 1990  
 
 # --- Almacenamiento Temporal en Memoria ---
-# Guarda las listas de enlaces por cada ID de usuario -> { user_id: [url1, url2, ...] }
 user_queues = {}
 
 # --- Servidor Flask de mantenimiento (para Render) ---
@@ -119,15 +118,12 @@ async def handle_link(client: Client, message: Message):
 
     user_id = message.from_user.id
     
-    # Inicializar la cola del usuario si no existe
     if user_id not in user_queues:
         user_queues[user_id] = []
         
-    # Guardar el link en la cola del usuario
     user_queues[user_id].append(url)
     total_guardados = len(user_queues[user_id])
 
-    # Generar panel de botones interactivos
     keyboard = InlineKeyboardMarkup([
         [
             InlineKeyboardButton("➕ Añadir más links", callback_data="add_more"),
@@ -142,7 +138,6 @@ async def handle_link(client: Client, message: Message):
         reply_markup=keyboard
     )
 
-# --- Manejador de los Botones Interactivos (Callbacks) ---
 @bot.on_callback_query()
 async def handle_buttons(client: Client, callback_query: CallbackQuery):
     user_id = callback_query.from_user.id
@@ -169,7 +164,6 @@ async def handle_buttons(client: Client, callback_query: CallbackQuery):
         
         total_links = len(queue)
         
-        # Procesar cada enlace de la lista secuencialmente
         for index, url in enumerate(list(queue), start=1):
             link_type = detect_link_type(url)
             thumb_path = f"thumb_{int(time.time())}.jpg"
@@ -186,7 +180,7 @@ async def handle_buttons(client: Client, callback_query: CallbackQuery):
                 size_mb = get_file_size_mb(file_path)
 
                 if size_mb > MAX_TELEGRAM_MB:
-                    await status_msg.reply_text(
+                    await callback_query.message.reply_text(
                         f"❌ El archivo {index} pesa {size_mb:.1f}MB y supera el límite permitido de {MAX_TELEGRAM_MB}MB. "
                         f"Se omitirá este enlace."
                     )
@@ -196,7 +190,6 @@ async def handle_buttons(client: Client, callback_query: CallbackQuery):
 
                 await status_msg.edit_text(f"🔍 **[{index}/{total_links}]** Analizando formato y extrayendo miniatura...")
 
-                # --- Extraer metadatos y fotograma (segundo 5) ---
                 vid_duration = 0
                 vid_width = 320
                 vid_height = 320
@@ -232,7 +225,6 @@ async def handle_buttons(client: Client, callback_query: CallbackQuery):
 
                 start_upload_time = time.time()
                 
-                # Envío final a Telegram incluyendo los argumentos de la cola en el progreso
                 await callback_query.message.reply_video(
                     video=file_path, 
                     duration=vid_duration, 
@@ -249,15 +241,18 @@ async def handle_buttons(client: Client, callback_query: CallbackQuery):
                 await callback_query.message.reply_text(f"❌ Error al procesar el archivo {index}: {e}")
                 
             finally:
-                # Asegurar siempre la limpieza local de archivos temporales
                 if file_path and os.path.exists(file_path):
                     os.remove(file_path)
                 if os.path.exists(thumb_path):
                     os.remove(thumb_path)
 
-        # Vaciar y limpiar por completo la cola del usuario una vez que terminen todas las descargas
         user_queues[user_id].clear()
         await status_msg.edit_text("✅ ¡Todos los archivos de tu lista han sido procesados y enviados exitosamente!")
 
 def main():
-    # Arrancar el servidor Flask en un hilo aparte para Render
+    threading.Thread(target=run_web, daemon=True).start()
+    logger.info("Bot iniciado con Pyrogram (Modo Cola Activo), escuchando mensajes...")
+    bot.run()
+
+if __name__ == "__main__":
+    main()
